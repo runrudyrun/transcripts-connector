@@ -64,7 +64,7 @@ def attach_document_to_event(creds, event_id, file_details):
         
         attachments = event.get('attachments', [])
 
-        file_title = file_details.get('title')
+        file_title = file_details.get('name')
 
         # Check if an attachment with the same title already exists
         if any(att.get('title') == file_title for att in attachments):
@@ -72,7 +72,7 @@ def attach_document_to_event(creds, event_id, file_details):
             return None
 
         new_attachment = {
-            'fileUrl': file_details.get('alternateLink'),
+            'fileUrl': file_details['webViewLink'],
             'title': file_title,
             'mimeType': file_details.get('mimeType')
         }

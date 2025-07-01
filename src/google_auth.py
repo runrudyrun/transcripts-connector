@@ -14,7 +14,7 @@ load_dotenv()
 SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/documents",
-    "https://www.googleapis.com/auth/drive.metadata.readonly"  # For reading file metadata
+    "https://www.googleapis.com/auth/drive"  # Full access to manage files (create, share, etc.)
 ]
 
 

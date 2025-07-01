@@ -1,9 +1,11 @@
+import os
+from datetime import datetime
 from dotenv import load_dotenv
 from src.logger import logger
 from src.google_auth import get_credentials
 from src.tldv_api import get_meetings, get_transcript_by_meeting_id
 from src.transcript_formatter import format_transcript
-from src.google_docs_api import create_document, insert_text, share_document, get_drive_file_details
+from src.google_docs_api import create_google_doc, share_file_publicly
 from src.google_calendar_api import get_calendar_events, attach_document_to_event, get_event_details
 
 def main():
@@ -11,12 +13,10 @@ def main():
     logger.info("Starting the transcript connector...")
 
     try:
-        # Load environment variables from .env file
         load_dotenv()
 
         logger.info("Step 1: Authenticating with Google...")
-        creds = get_credentials() # Uncomment when OAuth is fixed
-        # creds = "dummy_credentials" # Using a stub for now
+        creds = get_credentials()
         if not creds:
             logger.error("Failed to get Google credentials. Exiting.")
             return
@@ -24,6 +24,9 @@ def main():
 
         logger.info("Step 2: Fetching calendar events...")
         calendar_events = get_calendar_events(creds)
+        if calendar_events is None:
+            logger.error("Could not fetch calendar events. Exiting.")
+            return
 
         logger.info("Step 3: Fetching meetings from TLDV...")
         meetings_data = get_meetings()
@@ -34,26 +37,53 @@ def main():
         tldv_meetings = {m.get('extraProperties', {}).get('conferenceId'): m for m in meetings_data['results'] if m.get('extraProperties', {}).get('conferenceId')}
         logger.info(f"Found {len(tldv_meetings)} TLDV meetings with conference IDs.")
 
-        # 4. Process each calendar event
+        shared_drive_id = os.getenv('SHARED_DRIVE_ID')
+        folder_id = os.getenv('SHARED_DRIVE_FOLDER_ID')
+        if shared_drive_id:
+            if folder_id:
+                logger.info(f"Shared Drive ID: {shared_drive_id}, Folder ID: {folder_id}. Documents will be created in this folder.")
+            else:
+                logger.info(f"Shared Drive ID found: {shared_drive_id}. Documents will be created in the drive's root.")
+        else:
+            logger.info("No Shared Drive ID found. Documents will be created in the user's 'My Drive'.")
+
+        logger.info("\n--- Starting Event Processing ---")
         for event in calendar_events:
-            event_name = event.get('summary')
-            conference_id = event.get('conferenceId')
-            logger.info(f"Processing event: '{event_name}' (Conference ID: {conference_id})")
-
             try:
-                # 5. Check if a transcript is already attached (Temporarily disabled for testing)
-                doc_title = f"Transcript for {event_name}"
-                # if any(att.get('title') == doc_title for att in event.get('attachments', [])):
-                #     logger.info(f"Event '{event_name}' already has a transcript attached. Skipping.")
-                #     continue
+                event_name = event.get('summary')
+                conference_id = event.get('conferenceId')
+                logger.info(f"\nProcessing event: '{event_name}' (ID: {event.get('id')})")
 
-                # 6. Find matching TLDV meeting
-                matching_meeting = tldv_meetings.get(conference_id)
-                if not matching_meeting:
-                    logger.warning(f"No matching TLDV recording found for event '{event_name}'. Skipping.")
+                if not conference_id:
+                    logger.info(f"Event '{event_name}' has no conference ID. Skipping.")
                     continue
 
-                # 5. Get TLDV transcript
+                # Refined filter for confidential meetings (1-on-1s, reviews, etc.)
+                attendees = [att for att in event.get('attendees', []) if not att.get('resource', False)]
+                title_lower = event_name.lower() if event_name else ''
+
+                # Keywords that indicate a private or 1-on-1 meeting.
+                confidential_keywords = ['1:1', '1-1', 'one-on-one', 'one to one', 'catch-up', 'performance review']
+
+                is_confidential_by_title = any(keyword in title_lower for keyword in confidential_keywords)
+                is_confidential_by_size = len(attendees) == 2
+
+                if is_confidential_by_title or is_confidential_by_size:
+                    reason = "title keyword" if is_confidential_by_title else "attendee count"
+                    logger.info(f"Event '{event_name}' appears to be a confidential meeting (reason: {reason}). Skipping.")
+                    continue
+
+                # Check if a transcript is already attached to avoid duplication.
+                doc_title_prefix = f"[ANAIT]: Transcript for {event_name}"
+                if any(att.get('title', '').startswith(doc_title_prefix) for att in event.get('attachments', [])):
+                    logger.info(f"Event '{event_name}' already has a transcript with this prefix. Skipping.")
+                    continue
+
+                matching_meeting = tldv_meetings.get(conference_id)
+                if not matching_meeting:
+                    logger.info(f"No matching TLDV recording found for event '{event_name}'. Skipping.")
+                    continue
+
                 meeting_id = matching_meeting.get('id')
                 logger.info(f"Found matching TLDV meeting: '{matching_meeting.get('name')}' (ID: {meeting_id}). Fetching transcript...")
                 transcript_data = get_transcript_by_meeting_id(meeting_id)
@@ -61,58 +91,39 @@ def main():
                     logger.warning(f"Could not fetch transcript for meeting {meeting_id}. Skipping.")
                     continue
 
-                # 6. Format transcript
                 logger.info("Formatting transcript...")
                 formatted_transcript = format_transcript(transcript_data)
 
-                # 7. Create Google Doc
-                logger.info("Creating Google Doc...")
-                doc_title = f"Transcript for {event_name}"
-                document_id = create_document(creds, doc_title)
-                if not document_id:
-                    logger.error(f"Failed to create Google Doc for event '{event_name}'. Skipping.")
+                doc_title = f"{doc_title_prefix} ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})"
+                
+                logger.info(f"Creating Google Doc: '{doc_title}'")
+                doc_id = create_google_doc(creds, doc_title, formatted_transcript, shared_drive_id, folder_id)
+                if not doc_id:
+                    logger.warning(f"Skipping event {event['id']} due to document creation failure.")
                     continue
 
-                # 8. Insert transcript into Google Doc
-                logger.info("Inserting transcript into Google Doc...")
-                insert_text(creds, document_id, formatted_transcript)
-
-                # 9. Get file details from Drive for the attachment
-                logger.info("Fetching Google Drive file details for attachment...")
-                file_details = get_drive_file_details(creds, document_id)
-
+                logger.info(f"Sharing document {doc_id} and getting details...")
+                file_details = share_file_publicly(creds, doc_id)
                 if not file_details:
-                    logger.error("Could not retrieve document details from Drive. Skipping attachment.")
+                    logger.error(f"Could not share or retrieve details for doc {doc_id}. Skipping attachment.")
                     continue
-
-                # 10. Attach Google Doc to Calendar event
-                logger.info("Attaching document to calendar event...")
+                
+                logger.info(f"Attaching document '{file_details.get('name')}' to calendar event...")
                 attach_document_to_event(creds, event.get('id'), file_details)
 
-                # --- DIAGNOSTIC STEP ---
                 logger.info(f"DIAGNOSTIC: Fetching event details for '{event.get('id')}' post-attachment.")
-                event_details = get_event_details(creds, event.get('id'))
-                if event_details and 'attachments' in event_details:
-                    logger.info(f"DIAGNOSTIC: Found attachments: {event_details['attachments']}")
+                event_details_post = get_event_details(creds, event.get('id'))
+                if event_details_post and 'attachments' in event_details_post:
+                    logger.info(f"DIAGNOSTIC: Found attachments: {event_details_post['attachments']}")
                 else:
-                    logger.info("DIAGNOSTIC: No attachments field found in event details post-attachment.")
-                # --- END DIAGNOSTIC ---
-
-                # 11. Share document with invitees
-                invitees = event.get('attendees', []) 
-                if invitees:
-                    emails = [att['email'] for att in invitees if 'email' in att and not att.get('resource')]
-                    logger.info(f"Sharing document {document_id} with: {', '.join(emails)}")
-                    share_document(creds, document_id, emails)
-                else:
-                    logger.info("No attendees to share the document with.")
+                    logger.info("DIAGNOSTIC: No attachments found post-attachment.")
 
             except Exception as e:
-                logger.error(f"An error occurred while processing event '{event_name}': {e}", exc_info=True)
+                logger.error(f"An error occurred while processing event '{event.get('summary', 'Unknown')}': {e}", exc_info=True)
 
     except Exception as e:
-        logger.critical(f"A critical error occurred in the main process: {e}", exc_info=True)
-    
+        logger.critical(f"An unexpected error occurred in the main function: {e}", exc_info=True)
+
     logger.info("Process finished.")
 
 if __name__ == "__main__":
