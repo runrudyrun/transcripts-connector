@@ -55,8 +55,8 @@ def get_calendar_events(creds):
         logger.error(f"An error occurred with the Google Calendar API: {e}", exc_info=True)
         return None
 
-def attach_document_to_event(creds, event_id, file_details):
-    """Attaches a Google Doc to a calendar event using file details from Drive API."""
+def attach_document_to_event(creds, event_id, file_id, file_details):
+    """Attaches a Google Doc to a calendar event using a manually constructed URL."""
     try:
         service = build('calendar', 'v3', credentials=creds)
         
@@ -71,8 +71,13 @@ def attach_document_to_event(creds, event_id, file_details):
             logger.info(f"Attachment '{file_title}' already exists for event {event_id}. Skipping.")
             return None
 
+        # Manually construct the 'clean' URL, which mirrors the legacy 'alternateLink' format.
+        # This is the core of the hypothesis test: does the UI reject URLs with parameters?
+        clean_file_url = f"https://docs.google.com/document/d/{file_id}/edit"
+        logger.info(f"Using manually constructed clean URL for attachment: {clean_file_url}")
+
         new_attachment = {
-            'fileUrl': file_details['webViewLink'],
+            'fileUrl': clean_file_url,
             'title': file_title,
             'mimeType': file_details.get('mimeType')
         }
@@ -82,7 +87,6 @@ def attach_document_to_event(creds, event_id, file_details):
             'attachments': attachments
         }
         
-        logger.info(f"Attaching document to event {event_id}... using alternateLink: {file_details.get('alternateLink')}")
         updated_event = service.events().patch(
             calendarId='primary',
             eventId=event_id,

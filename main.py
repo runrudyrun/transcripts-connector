@@ -74,7 +74,7 @@ def main():
                     continue
 
                 # Check if a transcript is already attached to avoid duplication.
-                doc_title_prefix = f"[ANAIT]: Transcript for {event_name}"
+                doc_title_prefix = f"[ANAIT]__Transcript for {event_name}"
                 if any(att.get('title', '').startswith(doc_title_prefix) for att in event.get('attachments', [])):
                     logger.info(f"Event '{event_name}' already has a transcript with this prefix. Skipping.")
                     continue
@@ -109,7 +109,7 @@ def main():
                     continue
                 
                 logger.info(f"Attaching document '{file_details.get('name')}' to calendar event...")
-                attach_document_to_event(creds, event.get('id'), file_details)
+                attach_document_to_event(creds, event.get('id'), doc_id, file_details)
 
                 logger.info(f"DIAGNOSTIC: Fetching event details for '{event.get('id')}' post-attachment.")
                 event_details_post = get_event_details(creds, event.get('id'))
