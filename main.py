@@ -4,7 +4,7 @@ from src.google_auth import get_credentials
 from src.tldv_api import get_meetings, get_transcript_by_meeting_id
 from src.transcript_formatter import format_transcript
 from src.google_docs_api import create_document, insert_text, share_document
-from src.google_calendar_api import get_calendar_events, get_event_attachments, attach_document_to_event
+from src.google_calendar_api import get_calendar_events, add_link_to_event_description
 
 def main():
     """Main function to run the transcript connector."""
@@ -15,12 +15,12 @@ def main():
         load_dotenv()
 
         logger.info("Step 1: Authenticating with Google...")
-        # creds = get_credentials() # Uncomment when OAuth is fixed
-        creds = "dummy_credentials" # Using a stub for now
+        creds = get_credentials() # Uncomment when OAuth is fixed
+        # creds = "dummy_credentials" # Using a stub for now
         if not creds:
             logger.error("Failed to get Google credentials. Exiting.")
             return
-        logger.info("Successfully authenticated with Google (stub).")
+        logger.info("Successfully authenticated with Google.")
 
         logger.info("Step 2: Fetching calendar events...")
         calendar_events = get_calendar_events(creds)
@@ -41,10 +41,10 @@ def main():
             logger.info(f"Processing event: '{event_name}' (Conference ID: {conference_id})")
 
             try:
-                # Check for existing attachments
-                attachments = get_event_attachments(creds, event.get('id'))
-                if attachments:
-                    logger.info(f"Event '{event_name}' already has a transcript attached. Skipping.")
+                # Check for existing transcript link in the description
+                description = event.get('description', '')
+                if description and 'Transcript:' in description:
+                    logger.info(f"Event '{event_name}' already has a transcript link. Skipping.")
                     continue
 
                 # Find matching TLDV meeting
@@ -80,7 +80,7 @@ def main():
                 # 9. Attach Google Doc to Calendar event
                 logger.info("Attaching document to calendar event...")
                 document_url = f"https://docs.google.com/document/d/{document_id}"
-                attach_document_to_event(creds, event.get('id'), document_url)
+                add_link_to_event_description(creds, event.get('id'), document_url)
 
                 # 10. Share document with invitees
                 invitees = event.get('invitees', [])

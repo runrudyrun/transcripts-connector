@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # If modifying these scopes, delete the file token.json.
-SCOPES = ["https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/documents"]
+SCOPES = ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/documents"]
 
 
 def get_credentials():

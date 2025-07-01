@@ -1,40 +1,92 @@
 # This file will contain functions to interact with the Google Calendar API.
+import datetime
+from googleapiclient.discovery import build
+from google.auth.exceptions import RefreshError
 from src.logger import logger
 
-# TODO: Replace with actual Google Calendar API calls
-
 def get_calendar_events(creds):
-    """(Stub) Fetches upcoming events from Google Calendar."""
-    logger.info("(Stub) Fetching events from Google Calendar.")
+    """Fetches upcoming events from the user's primary Google Calendar."""
+    try:
+        service = build('calendar', 'v3', credentials=creds)
+        now = datetime.datetime.utcnow().isoformat() + 'Z'  # 'Z' indicates UTC time
+        # Get events from the next 7 days
+        time_max = (datetime.datetime.utcnow() + datetime.timedelta(days=7)).isoformat() + 'Z'
+        
+        logger.info("Fetching events from Google Calendar for the next 7 days...")
+        events_result = service.events().list(
+            calendarId='primary', 
+            timeMin=now,
+            timeMax=time_max,
+            singleEvents=True,
+            orderBy='startTime',
+            # Request only the fields we need to be efficient
+            fields='items(id,summary,attendees,conferenceData(conferenceId),description)'
+        ).execute()
+        
+        events = events_result.get('items', [])
+        
+        if not events:
+            logger.info("No upcoming events found.")
+            return []
 
-    # This is a mock event. The 'conferenceId' should match the one in the
-    # 'extraProperties' of a TLDV meeting object to test the matching logic.
-    # To find a real conferenceId, you can inspect the output of get_meetings()
-    # in tldv_api.py and pick one.
-    mock_events = [
-        {
-            'summary': '1:1 Kolya with Roman Ianvarev about future teams',
-            'id': 'b1ddq0btuhcvqr98bt0v831g3h',
-            # Using a real conferenceId from the TLDV debug output
-            'conferenceId': 'phg-akrz-ctx',
-            'invitees': [
-                {'email': 'participant1@example.com'},
-                {'email': 'participant2@example.com'}
-            ] 
+        # Process events to extract the required info in a simple format
+        processed_events = []
+        for event in events:
+            # Skip events without conference data or a conferenceId
+            conference_data = event.get('conferenceData')
+            if not conference_data or not conference_data.get('conferenceId'):
+                continue
+            
+            processed_events.append({
+                'id': event.get('id'),
+                'summary': event.get('summary'),
+                'conferenceId': conference_data.get('conferenceId'),
+                'invitees': event.get('attendees', []),
+                'attachments': event.get('attachments', [])
+            })
+        
+        logger.info(f"Found {len(processed_events)} events with conference IDs.")
+        return processed_events
+
+    except RefreshError as e:
+        logger.error(f"Google credentials have expired or been revoked: {e}. Please re-authenticate by deleting token.json and running again.")
+        return None
+    except Exception as e:
+        logger.error(f"An error occurred with the Google Calendar API: {e}", exc_info=True)
+        return None
+
+def add_link_to_event_description(creds, event_id, document_url):
+    """Appends a link to the Google Doc in the event's description."""
+    try:
+        service = build('calendar', 'v3', credentials=creds)
+        
+        # Get the existing event to fetch its current description
+        event = service.events().get(calendarId='primary', eventId=event_id, fields='description').execute()
+        
+        current_description = event.get('description', '')
+        if not current_description:
+            current_description = ""
+            
+        # Prepare the text to add
+        link_text = f"\n\n---\nTranscript: {document_url}"
+        
+        # Combine descriptions
+        new_description = current_description + link_text
+        
+        body = {
+            'description': new_description
         }
-    ]
-    logger.info(f"(Stub) Found {len(mock_events)} events.")
-    return mock_events
+        
+        logger.info(f"Adding transcript link to event {event_id} description...")
+        updated_event = service.events().patch(
+            calendarId='primary',
+            eventId=event_id,
+            body=body
+        ).execute()
+        
+        logger.info(f"Successfully updated event description. New event version: {updated_event.get('etag')}")
+        return True
 
-def get_event_attachments(creds, event_id):
-    """(Stub) Checks for attachments on a calendar event."""
-    logger.info(f"(Stub) Checking for attachments on event {event_id}.")
-    # Return an empty list to simulate no existing document
-    return []
-
-def attach_document_to_event(creds, event_id, document_url):
-    """(Stub) Attaches a Google Doc to a calendar event."""
-    logger.info(f"(Stub) Attaching document {document_url} to event {event_id}.")
-    # TODO: Implement actual Google Calendar API call to add an attachment.
-    logger.info("(Stub) Attachment complete.")
-    return True
+    except Exception as e:
+        logger.error(f"Failed to update event {event_id} description: {e}", exc_info=True)
+        return False
