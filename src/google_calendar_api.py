@@ -20,7 +20,7 @@ def get_calendar_events(creds):
             singleEvents=True,
             orderBy='startTime',
             # Request only the fields we need to be efficient
-            fields='items(id,summary,attendees,conferenceData(conferenceId),description)'
+            fields='items(id,summary,attendees,attachments,conferenceData(conferenceId))'
         ).execute()
         
         events = events_result.get('items', [])
@@ -55,38 +55,55 @@ def get_calendar_events(creds):
         logger.error(f"An error occurred with the Google Calendar API: {e}", exc_info=True)
         return None
 
-def add_link_to_event_description(creds, event_id, document_url):
-    """Appends a link to the Google Doc in the event's description."""
+def attach_document_to_event(creds, event_id, file_details):
+    """Attaches a Google Doc to a calendar event using file details from Drive API."""
     try:
         service = build('calendar', 'v3', credentials=creds)
         
-        # Get the existing event to fetch its current description
-        event = service.events().get(calendarId='primary', eventId=event_id, fields='description').execute()
+        event = service.events().get(calendarId='primary', eventId=event_id).execute()
         
-        current_description = event.get('description', '')
-        if not current_description:
-            current_description = ""
-            
-        # Prepare the text to add
-        link_text = f"\n\n---\nTranscript: {document_url}"
-        
-        # Combine descriptions
-        new_description = current_description + link_text
-        
+        attachments = event.get('attachments', [])
+
+        file_title = file_details.get('title')
+
+        # Check if an attachment with the same title already exists
+        if any(att.get('title') == file_title for att in attachments):
+            logger.info(f"Attachment '{file_title}' already exists for event {event_id}. Skipping.")
+            return None
+
+        new_attachment = {
+            'fileUrl': file_details.get('alternateLink'),
+            'title': file_title,
+            'mimeType': file_details.get('mimeType')
+        }
+        attachments.append(new_attachment)
+
         body = {
-            'description': new_description
+            'attachments': attachments
         }
         
-        logger.info(f"Adding transcript link to event {event_id} description...")
+        logger.info(f"Attaching document to event {event_id}... using alternateLink: {file_details.get('alternateLink')}")
         updated_event = service.events().patch(
             calendarId='primary',
             eventId=event_id,
-            body=body
+            body=body,
+            supportsAttachments=True
         ).execute()
         
-        logger.info(f"Successfully updated event description. New event version: {updated_event.get('etag')}")
+        logger.info(f"Successfully attached document. New event version: {updated_event.get('etag')}")
         return True
 
     except Exception as e:
-        logger.error(f"Failed to update event {event_id} description: {e}", exc_info=True)
+        logger.error(f"Failed to attach document to event {event_id}: {e}", exc_info=True)
         return False
+
+def get_event_details(creds, event_id):
+    """Fetches the full details of a single event for diagnostic purposes."""
+    try:
+        service = build('calendar', 'v3', credentials=creds)
+        event = service.events().get(calendarId='primary', eventId=event_id).execute()
+        logger.info(f"Successfully fetched details for event {event_id}")
+        return event
+    except Exception as e:
+        logger.error(f"Failed to get details for event {event_id}: {e}", exc_info=True)
+        return None

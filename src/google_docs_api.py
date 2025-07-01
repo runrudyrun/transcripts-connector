@@ -60,4 +60,31 @@ def share_document(creds, document_id, emails):
         return True
     except Exception as e:
         logger.error(f"Failed to share document {document_id}: {e}", exc_info=True)
-        return False
+
+def get_drive_file_details(creds, document_id):
+    """Fetches file details (alternateLink, title, mimeType) from Google Drive."""
+    try:
+        drive_service = build('drive', 'v3', credentials=creds)
+        # Request the necessary fields from the Drive API.
+        # Using alternateLink as per the Calendar API documentation example.
+        file_metadata = drive_service.files().get(
+            fileId=document_id, fields='alternateLink, title, mimeType'
+        ).execute()
+        return file_metadata
+    except Exception as e:
+        logger.error(f"An error occurred while fetching Drive file details: {e}")
+        return None
+
+def get_drive_file_details(creds, document_id):
+    """Fetches file details (alternateLink, title, mimeType) from Google Drive."""
+    try:
+        drive_service = build('drive', 'v3', credentials=creds)
+        # Request the necessary fields from the Drive API.
+        # Using alternateLink as per the Calendar API documentation example.
+        file_metadata = drive_service.files().get(
+            fileId=document_id, fields='alternateLink, title, mimeType'
+        ).execute()
+        return file_metadata
+    except Exception as e:
+        logger.error(f"An error occurred while fetching Drive file details: {e}")
+        return None

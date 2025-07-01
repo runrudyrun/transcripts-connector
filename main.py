@@ -3,11 +3,11 @@ from src.logger import logger
 from src.google_auth import get_credentials
 from src.tldv_api import get_meetings, get_transcript_by_meeting_id
 from src.transcript_formatter import format_transcript
-from src.google_docs_api import create_document, insert_text, share_document
-from src.google_calendar_api import get_calendar_events, add_link_to_event_description
+from src.google_docs_api import create_document, insert_text, share_document, get_drive_file_details
+from src.google_calendar_api import get_calendar_events, attach_document_to_event, get_event_details
 
 def main():
-    """Main function to run the transcript connector."""
+    """Main function to orchestrate the transcript processing workflow."""
     logger.info("Starting the transcript connector...")
 
     try:
@@ -41,13 +41,13 @@ def main():
             logger.info(f"Processing event: '{event_name}' (Conference ID: {conference_id})")
 
             try:
-                # Check for existing transcript link in the description
-                description = event.get('description', '')
-                if description and 'Transcript:' in description:
-                    logger.info(f"Event '{event_name}' already has a transcript link. Skipping.")
-                    continue
+                # 5. Check if a transcript is already attached (Temporarily disabled for testing)
+                doc_title = f"Transcript for {event_name}"
+                # if any(att.get('title') == doc_title for att in event.get('attachments', [])):
+                #     logger.info(f"Event '{event_name}' already has a transcript attached. Skipping.")
+                #     continue
 
-                # Find matching TLDV meeting
+                # 6. Find matching TLDV meeting
                 matching_meeting = tldv_meetings.get(conference_id)
                 if not matching_meeting:
                     logger.warning(f"No matching TLDV recording found for event '{event_name}'. Skipping.")
@@ -77,17 +77,35 @@ def main():
                 logger.info("Inserting transcript into Google Doc...")
                 insert_text(creds, document_id, formatted_transcript)
 
-                # 9. Attach Google Doc to Calendar event
-                logger.info("Attaching document to calendar event...")
-                document_url = f"https://docs.google.com/document/d/{document_id}"
-                add_link_to_event_description(creds, event.get('id'), document_url)
+                # 9. Get file details from Drive for the attachment
+                logger.info("Fetching Google Drive file details for attachment...")
+                file_details = get_drive_file_details(creds, document_id)
 
-                # 10. Share document with invitees
-                invitees = event.get('invitees', [])
+                if not file_details:
+                    logger.error("Could not retrieve document details from Drive. Skipping attachment.")
+                    continue
+
+                # 10. Attach Google Doc to Calendar event
+                logger.info("Attaching document to calendar event...")
+                attach_document_to_event(creds, event.get('id'), file_details)
+
+                # --- DIAGNOSTIC STEP ---
+                logger.info(f"DIAGNOSTIC: Fetching event details for '{event.get('id')}' post-attachment.")
+                event_details = get_event_details(creds, event.get('id'))
+                if event_details and 'attachments' in event_details:
+                    logger.info(f"DIAGNOSTIC: Found attachments: {event_details['attachments']}")
+                else:
+                    logger.info("DIAGNOSTIC: No attachments field found in event details post-attachment.")
+                # --- END DIAGNOSTIC ---
+
+                # 11. Share document with invitees
+                invitees = event.get('attendees', []) 
                 if invitees:
-                    emails = [invitee['email'] for invitee in invitees]
-                    logger.info("Sharing document with invitees...")
+                    emails = [att['email'] for att in invitees if 'email' in att and not att.get('resource')]
+                    logger.info(f"Sharing document {document_id} with: {', '.join(emails)}")
                     share_document(creds, document_id, emails)
+                else:
+                    logger.info("No attendees to share the document with.")
 
             except Exception as e:
                 logger.error(f"An error occurred while processing event '{event_name}': {e}", exc_info=True)
