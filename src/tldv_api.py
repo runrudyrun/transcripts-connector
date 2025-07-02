@@ -47,6 +47,33 @@ def get_transcript_by_meeting_id(meeting_id):
         return None
 
 
+def get_highlights_by_meeting_id(meeting_id: str):
+    """Fetches the highlights (AI Notes) for a given meeting ID from the tldv API."""
+    api_key = os.environ.get("TLDV_API_KEY")
+    if not api_key:
+        raise ValueError("Missing TLDV_API_KEY environment variable")
+
+    headers = {
+        "x-api-key": api_key,
+        "Content-Type": "application/json",
+    }
+
+    url = f"{API_BASE_URL}/meetings/{meeting_id}/highlights"
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        logger.info(f"Successfully fetched highlights for meeting {meeting_id}.")
+        return response.json()
+    except requests.exceptions.HTTPError as http_err:
+        if response.status_code == 404:
+            logger.warning(f"No highlights found for meeting {meeting_id} (404 Not Found).")
+        else:
+            logger.error(f"HTTP error fetching highlights for {meeting_id}: {http_err}")
+    except requests.exceptions.RequestException as req_err:
+        logger.error(f"Request failed while fetching highlights for {meeting_id}: {req_err}")
+    return None
+
+
 if __name__ == "__main__":
     # This is for testing purposes. 
     # Make sure to set your TLDV_API_KEY in the .env file.

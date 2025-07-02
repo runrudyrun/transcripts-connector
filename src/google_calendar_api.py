@@ -2,21 +2,21 @@
 import datetime
 from googleapiclient.discovery import build
 from google.auth.exceptions import RefreshError
-from src.logger import logger
+from googleapiclient.errors import HttpError
+from .logger import logger
 
-def find_concluded_events(creds, days_ago=7):
-    """Finds events that have concluded in the last specified number of days."""
+def find_concluded_events(creds, time_delta):
+    """Finds events that have concluded within the specified timedelta."""
     try:
         service = build('calendar', 'v3', credentials=creds)
-        now_utc = datetime.datetime.utcnow()
-        time_min = (now_utc - datetime.timedelta(days=days_ago)).isoformat() + 'Z'
-        time_max = now_utc.isoformat() + 'Z'
+        now = datetime.datetime.utcnow()
+        start_time = now - time_delta
 
-        logger.info(f"Searching for concluded events from the last {days_ago} days...")
+        logger.info(f"Searching for concluded events from the last {time_delta}...")
         events_result = service.events().list(
             calendarId='primary',
-            timeMin=time_min,
-            timeMax=time_max,
+            timeMin=start_time.isoformat() + 'Z',
+            timeMax=now.isoformat() + 'Z',
             singleEvents=True,
             orderBy='startTime',
             fields='items(id,summary,start,end,attendees,attachments,conferenceData(conferenceId))'
@@ -43,6 +43,9 @@ def find_concluded_events(creds, days_ago=7):
     except RefreshError as e:
         logger.error(f"Google credentials have expired or been revoked: {e}. Please re-authenticate by deleting token.json and running again.")
         return None
+    except HttpError as error:
+        logger.error(f'An error occurred: {error}')
+        return []
     except Exception as e:
         logger.error(f"An error occurred with the Google Calendar API: {e}", exc_info=True)
         return None

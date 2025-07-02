@@ -1,17 +1,16 @@
 import argparse
 import os
+from datetime import timedelta
 from dotenv import load_dotenv
 from src.logger import logger
 from src.google_auth import get_credentials
 from src.google_calendar_api import find_concluded_events, remove_attachment_from_event
 from src.google_docs_api import delete_google_doc
 
-ATTACHMENT_PREFIX = "[ANAIT]__Transcript for"
-
-def find_attachments_to_clean(creds, days):
+def find_attachments_to_clean(creds, time_delta, prefix):
     """Finds events and attachments that match the script's naming convention."""
-    logger.info(f"Searching for events in the last {days} days to find attachments to clean...")
-    events = find_concluded_events(creds, days_ago=days)
+    logger.info(f"Searching for events in the last {time_delta} to find attachments with prefix '{prefix}'...")
+    events = find_concluded_events(creds, time_delta=time_delta)
     if not events:
         logger.info("No recent events found.")
         return []
@@ -22,7 +21,7 @@ def find_attachments_to_clean(creds, days):
         event_summary = event.get('summary')
         for attachment in event.get('attachments', []):
             title = attachment.get('title')
-            if title and title.startswith(ATTACHMENT_PREFIX):
+            if title and title.startswith(prefix):
                 # Extract file ID from the URL
                 file_url = attachment.get('fileUrl', '')
                 file_id = file_url.split('/d/')[1].split('/')[0] if '/d/' in file_url else None
@@ -38,9 +37,16 @@ def find_attachments_to_clean(creds, days):
 def main():
     """Main function to handle the cleanup process."""
     parser = argparse.ArgumentParser(description="Clean up attachments created by the transcript connector.")
-    parser.add_argument("--days", type=int, default=7, help="Number of past days to search for events.")
+    parser.add_argument("--days", type=int, default=0, help="Number of past days to search for events.")
+    parser.add_argument("--hours", type=int, default=0, help="Number of past hours to search for events.")
+    parser.add_argument("--prefix", type=str, default="Transcript for", help="The prefix of attachment titles to search for.")
     parser.add_argument("--dry-run", action='store_true', help="List attachments to be deleted without actually deleting them.")
     args = parser.parse_args()
+
+    time_delta = timedelta(days=args.days, hours=args.hours)
+    if time_delta.total_seconds() == 0:
+        time_delta = timedelta(days=7)
+        logger.info("No time window specified, defaulting to 7 days.")
 
     logger.info("--- Starting Attachment Cleanup Script ---")
     if args.dry_run:
@@ -51,7 +57,7 @@ def main():
     if not creds:
         return
 
-    items = find_attachments_to_clean(creds, args.days)
+    items = find_attachments_to_clean(creds, time_delta, args.prefix)
 
     if not items:
         logger.info("No attachments matching the criteria were found.")
