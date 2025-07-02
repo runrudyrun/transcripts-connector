@@ -7,12 +7,12 @@ import requests
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src.tldv_api import get_meetings, get_transcript_by_meeting_id
+from src.providers.tldv import get_meetings, get_transcript_by_meeting_id
 
 class TestTldvApi(unittest.TestCase):
 
     @patch.dict(os.environ, {"TLDV_API_KEY": "test_key"})
-    @patch('src.tldv_api.requests.get')
+    @patch('src.providers.tldv.requests.get')
     def test_get_meetings_success(self, mock_get):
         """Test successful fetching of meetings."""
         mock_response = MagicMock()
@@ -26,7 +26,7 @@ class TestTldvApi(unittest.TestCase):
         self.assertEqual(meetings['results'][0]['name'], 'Meeting 1')
 
     @patch.dict(os.environ, {"TLDV_API_KEY": "test_key"})
-    @patch('src.tldv_api.requests.get')
+    @patch('src.providers.tldv.requests.get')
     def test_get_meetings_failure(self, mock_get):
         """Test failure in fetching meetings."""
         mock_get.side_effect = requests.exceptions.RequestException("API Error")
@@ -35,7 +35,7 @@ class TestTldvApi(unittest.TestCase):
         self.assertIsNone(meetings)
 
     @patch.dict(os.environ, {"TLDV_API_KEY": "test_key"})
-    @patch('src.tldv_api.requests.get')
+    @patch('src.providers.tldv.requests.get')
     def test_get_transcript_success(self, mock_get):
         """Test successful fetching of a transcript."""
         mock_response = MagicMock()
@@ -48,7 +48,7 @@ class TestTldvApi(unittest.TestCase):
         self.assertEqual(transcript['transcript'], 'Hello world')
 
     @patch.dict(os.environ, {"TLDV_API_KEY": "test_key"})
-    @patch('src.tldv_api.requests.get')
+    @patch('src.providers.tldv.requests.get')
     def test_get_transcript_failure(self, mock_get):
         """Test failure in fetching a transcript."""
         mock_get.side_effect = requests.exceptions.RequestException("API Error")

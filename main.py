@@ -3,7 +3,8 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from src.logger import logger
 from src.google_auth import get_credentials
-from src.tldv_api import get_meetings, get_transcript_by_meeting_id
+from src.providers import get_all_meetings, get_transcript
+from src.provider_helpers import get_conference_id, get_start_time, get_meeting_name, get_meeting_id
 from src.transcript_formatter import format_transcript
 from src.google_docs_api import create_google_doc, share_file_publicly
 from src.google_calendar_api import find_concluded_events, attach_document_to_event, get_event_details
@@ -26,9 +27,9 @@ def main():
             logger.info("No recently concluded events found to process.")
             return
 
-        logger.info("Step 3: Fetching meetings from TLDV...")
-        tldv_meetings_raw = get_meetings().get('results', [])
-        if not tldv_meetings_raw:
+        logger.info("Step 3: Fetching meetings from all enabled providers...")
+        all_meetings = get_all_meetings()
+        if not all_meetings:
             logger.warning("No meetings found in TLDV.")
             return
 
@@ -36,53 +37,52 @@ def main():
         logger.info("\n--- Matching Calendar events with TLDV recordings ---")
         matched_pairs = []
         unmatched_events = list(calendar_events)
-        unmatched_tldv = list(tldv_meetings_raw)
+        unmatched_meetings = list(all_meetings)
 
         # Stage 1: Match by Conference ID
         events_by_conf_id = {e.get('conferenceData', {}).get('conferenceId'): e for e in unmatched_events if e.get('conferenceData', {}).get('conferenceId')}
-        tldv_by_conf_id = {m.get('extraProperties', {}).get('conferenceId'): m for m in unmatched_tldv if m.get('extraProperties', {}).get('conferenceId')}
+        meetings_by_conf_id = {get_conference_id(m): m for m in unmatched_meetings if get_conference_id(m)}
         
-        conf_ids_to_match = set(events_by_conf_id.keys()) & set(tldv_by_conf_id.keys())
+        conf_ids_to_match = set(events_by_conf_id.keys()) & set(meetings_by_conf_id.keys())
         for conf_id in conf_ids_to_match:
-            matched_pairs.append((events_by_conf_id[conf_id], tldv_by_conf_id[conf_id]))
+            matched_pairs.append((events_by_conf_id[conf_id], meetings_by_conf_id[conf_id]))
             logger.info(f"Matched by Conference ID: '{events_by_conf_id[conf_id].get('summary')}'")
         
         # Remove matched items from the pools for the next stage
         unmatched_events = [e for e in unmatched_events if e.get('conferenceData', {}).get('conferenceId') not in conf_ids_to_match]
-        unmatched_tldv = [m for m in unmatched_tldv if m.get('extraProperties', {}).get('conferenceId') not in conf_ids_to_match]
+        unmatched_meetings = [m for m in unmatched_meetings if get_conference_id(m) not in conf_ids_to_match]
         logger.info(f"{len(conf_ids_to_match)} pairs matched by Conference ID.")
 
         # Stage 2: Match by Time Proximity
-        logger.info(f"Attempting to match {len(unmatched_events)} remaining events and {len(unmatched_tldv)} recordings by time...")
+        logger.info(f"Attempting to match {len(unmatched_events)} remaining events and {len(unmatched_meetings)} recordings by time...")
         time_match_threshold = timedelta(minutes=5)
         
-        temp_unmatched_tldv = []
-        for tldv_meeting in unmatched_tldv:
+        temp_unmatched_meetings = []
+        for meeting in unmatched_meetings:
             best_match_event = None
             smallest_diff = time_match_threshold
 
-            tldv_start_str = tldv_meeting.get('recordingStartedAt')
-            if not tldv_start_str: continue
-            tldv_start_time = datetime.datetime.fromisoformat(tldv_start_str.replace('Z', '+00:00'))
+            meeting_start_time = get_start_time(meeting)
+            if not meeting_start_time: continue
 
             for event in unmatched_events:
                 event_start_str = event.get('start', {}).get('dateTime')
                 if not event_start_str: continue
                 event_start_time = datetime.datetime.fromisoformat(event_start_str.replace('Z', '+00:00'))
 
-                time_diff = abs(tldv_start_time - event_start_time)
+                time_diff = abs(meeting_start_time - event_start_time)
                 if time_diff < smallest_diff:
                     smallest_diff = time_diff
                     best_match_event = event
             
             if best_match_event:
-                logger.info(f"Matched by Time: '{best_match_event.get('summary')}' and TLDV recording '{tldv_meeting.get('name')}' (diff: {smallest_diff})")
-                matched_pairs.append((best_match_event, tldv_meeting))
+                logger.info(f"Matched by Time: '{best_match_event.get('summary')}' and '{get_meeting_name(meeting)}' from {meeting.get('source')} (diff: {smallest_diff})")
+                matched_pairs.append((best_match_event, meeting))
                 unmatched_events.remove(best_match_event)
             else:
-                temp_unmatched_tldv.append(tldv_meeting)
+                temp_unmatched_meetings.append(meeting)
         
-        unmatched_tldv = temp_unmatched_tldv
+        unmatched_meetings = temp_unmatched_meetings
         logger.info(f"{len(matched_pairs) - len(conf_ids_to_match)} pairs matched by time.")
 
         if not matched_pairs:
@@ -94,7 +94,7 @@ def main():
         shared_drive_id = os.getenv('SHARED_DRIVE_ID')
         folder_id = os.getenv('SHARED_DRIVE_FOLDER_ID')
 
-        for event, tldv_meeting in matched_pairs:
+        for event, meeting in matched_pairs:
             try:
                 event_name = event.get('summary')
                 logger.info(f"\nProcessing pair: '{event_name}' (Event ID: {event.get('id')})")
@@ -114,9 +114,10 @@ def main():
                     logger.info(f"Event '{event_name}' already has a transcript with this prefix. Skipping.")
                     continue
 
-                meeting_id = tldv_meeting.get('id')
-                logger.info(f"Using matched TLDV meeting: '{tldv_meeting.get('name')}' (ID: {meeting_id}). Fetching transcript...")
-                transcript_data = get_transcript_by_meeting_id(meeting_id)
+                meeting_id = get_meeting_id(meeting)
+                provider_name = meeting.get('source', 'unknown').upper()
+                logger.info(f"Using matched {provider_name} meeting: '{get_meeting_name(meeting)}' (ID: {meeting_id}). Fetching transcript...")
+                transcript_data = get_transcript(meeting)
                 if not transcript_data:
                     logger.warning(f"Could not fetch transcript for meeting {meeting_id}. Skipping.")
                     continue

@@ -8,7 +8,7 @@ def find_concluded_events(creds, days_ago=7):
     """Finds events that have concluded in the last specified number of days."""
     try:
         service = build('calendar', 'v3', credentials=creds)
-        now_utc = datetime.datetime.utcnow()
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
         time_min = (now_utc - datetime.timedelta(days=days_ago)).isoformat() + 'Z'
         time_max = now_utc.isoformat() + 'Z'
 

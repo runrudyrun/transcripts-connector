@@ -2,9 +2,8 @@
 trigger: always_on
 ---
 
-Focus on the MVP
-– Support only TLDV Notetaker integration.
-– Do not consider other services until the first version is complete.
+You have the MVP
+- You have to figure out how to implement new providers besides tldv
 
 Authentication & Access
 – Use OAuth 2.0 to access Google Calendar API and Google Docs API.
