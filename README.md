@@ -1,69 +1,73 @@
 # Transcripts Connector
 
-This service automatically fetches meeting transcripts from TLDV and attaches them to the corresponding Google Calendar events as Google Docs.
+This tool automates the process of fetching meeting transcripts from TLDV, creating a formatted Google Doc, and attaching it to the corresponding Google Calendar event.
 
-## Current Status
+## Key Features
 
-**This project is currently in development.** The core logic is implemented, but the integration with Google APIs (Calendar, Docs) is using stubs due to an ongoing OAuth `redirect_uri_mismatch` issue. The TLDV integration is functional.
-
-## Features
-
-- **TLDV Integration**: Fetches meeting lists and transcripts.
-- **Google Calendar Integration (Stubbed)**: Fetches events and attaches documents.
-- **Google Docs Integration (Stubbed)**: Creates documents, inserts text, and manages permissions.
-- **Transcript Formatting**: Converts raw transcript data into a readable format.
-- **Configuration**: Uses a `.env` file for managing API keys and settings.
-- **Logging**: Centralized logging for clear and structured output.
-- **Testing**: Unit tests for all API modules.
-
-## Prerequisites
-
-- Python 3.10+
-- `pip` for package management
+- **Fetches Past Events**: Scans Google Calendar for events that have concluded within the last 7 days.
+- **Robust Matching Logic**: Implements a two-stage matching process to accurately pair calendar events with TLDV recordings:
+  1.  Matches using the unique `conferenceId`.
+  2.  For remaining items, matches by the closest time proximity (within a 5-minute window).
+- **Confidentiality Filter**: Automatically skips processing for meetings that appear to be confidential (e.g., "1:1", "performance review") or have only two attendees.
+- **Automated Document Creation**: Generates a new Google Doc for each matched transcript.
+- **Standardized Titling**: All created documents are titled with the prefix `ANAIT: Transcript for {Event Name}` for easy identification and cleanup.
+- **Public Sharing & Attachment**: Shares the Google Doc publicly (view-only) and attaches it to the calendar event.
+- **Safe Cleanup Utility**: Includes a command-line script (`cleanup_attachments.py`) to safely remove generated documents and their corresponding calendar attachments.
 
 ## Setup
 
 1.  **Clone the repository:**
     ```bash
-    git clone <repository-url>
+    git clone <repository_url>
     cd transcripts-connector
     ```
 
-2.  **Create a virtual environment (recommended):**
-    ```bash
-    python3 -m venv .venv
-    source .venv/bin/activate
-    ```
-
-3.  **Install dependencies:**
+2.  **Install dependencies:**
     ```bash
     pip install -r requirements.txt
     ```
 
-4.  **Configure environment variables:**
-    -   Copy the example environment file:
-        ```bash
-        cp .env.example .env
-        ```
-    -   Open the `.env` file and add your TLDV API key:
-        ```
-        TLDV_API_KEY="your_tldv_api_key_here"
-        ```
+3.  **Configure Environment Variables:**
+    Create a `.env` file in the root directory and add your Google Cloud and TLDV credentials. You can use `.env.example` as a template.
+    ```
+    GOOGLE_CLIENT_ID=your_google_client_id
+    GOOGLE_CLIENT_SECRET=your_google_client_secret
+    TLDV_API_KEY=your_tldv_api_key
+    SHARED_DRIVE_ID=your_google_shared_drive_id (Optional)
+    SHARED_DRIVE_FOLDER_ID=your_google_drive_folder_id (Optional)
+    ```
+
+4.  **Authenticate with Google:**
+    Run the main script for the first time. It will open a browser window for you to authorize the application. This will create a `token.json` file that stores your authentication credentials.
+    ```bash
+    python main.py
+    ```
 
 ## Usage
 
-To run the main script, execute the following command from the root directory:
+### Main Script
 
+To run the main connector process, execute:
 ```bash
-python3 main.py
+python main.py
 ```
 
-The script will log its progress to the console.
+### Cleanup Script
 
-## Running Tests
+The cleanup script helps you remove documents and attachments created by this tool. It has two modes:
 
-To run the unit tests, use the following command:
+1.  **Dry Run (Recommended first):**
+    This command lists all the files and attachments that would be deleted, without actually deleting anything.
+    ```bash
+    python cleanup_attachments.py --dry-run
+    ```
 
-```bash
-python3 -m unittest discover tests
-```
+2.  **Deletion Mode:**
+    To permanently delete the files and attachments found, run the script without the `--dry-run` flag. It will ask for your confirmation before proceeding.
+    ```bash
+    python cleanup_attachments.py
+    ```
+    You can also specify how many days back to search (default is 7):
+    ```bash
+    python cleanup_attachments.py --days 30
+    ```

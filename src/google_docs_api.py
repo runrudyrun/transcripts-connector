@@ -77,5 +77,16 @@ def share_file_publicly(creds, file_id):
         return file_details
 
     except Exception as e:
-        logger.error(f"Failed to share file {file_id}: {e}", exc_info=True)
+        logger.error(f"An error occurred while sharing file {file_id}: {e}", exc_info=True)
         return None
+
+def delete_google_doc(creds, file_id):
+    """Permanently deletes a file from Google Drive."""
+    try:
+        service = build('drive', 'v3', credentials=creds)
+        service.files().delete(fileId=file_id, supportsAllDrives=True).execute()
+        logger.info(f"Successfully deleted Google Doc with ID: {file_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to delete Google Doc with ID {file_id}: {e}", exc_info=True)
+        return False

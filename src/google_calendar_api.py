@@ -4,49 +4,41 @@ from googleapiclient.discovery import build
 from google.auth.exceptions import RefreshError
 from src.logger import logger
 
-def get_calendar_events(creds):
-    """Fetches upcoming events from the user's primary Google Calendar."""
+def find_concluded_events(creds, days_ago=7):
+    """Finds events that have concluded in the last specified number of days."""
     try:
         service = build('calendar', 'v3', credentials=creds)
-        now = datetime.datetime.utcnow().isoformat() + 'Z'  # 'Z' indicates UTC time
-        # Get events from the next 7 days
-        time_max = (datetime.datetime.utcnow() + datetime.timedelta(days=7)).isoformat() + 'Z'
-        
-        logger.info("Fetching events from Google Calendar for the next 7 days...")
+        now_utc = datetime.datetime.utcnow()
+        time_min = (now_utc - datetime.timedelta(days=days_ago)).isoformat() + 'Z'
+        time_max = now_utc.isoformat() + 'Z'
+
+        logger.info(f"Searching for concluded events from the last {days_ago} days...")
         events_result = service.events().list(
-            calendarId='primary', 
-            timeMin=now,
+            calendarId='primary',
+            timeMin=time_min,
             timeMax=time_max,
             singleEvents=True,
             orderBy='startTime',
-            # Request only the fields we need to be efficient
-            fields='items(id,summary,attendees,attachments,conferenceData(conferenceId))'
+            fields='items(id,summary,start,end,attendees,attachments,conferenceData(conferenceId))'
         ).execute()
-        
+
         events = events_result.get('items', [])
-        
         if not events:
-            logger.info("No upcoming events found.")
+            logger.info("No events found in the specified time range.")
             return []
 
-        # Process events to extract the required info in a simple format
-        processed_events = []
+        # Filter to ensure we only process events that have actually ended.
+        concluded_events = []
+        now_aware = datetime.datetime.now(datetime.timezone.utc)
         for event in events:
-            # Skip events without conference data or a conferenceId
-            conference_data = event.get('conferenceData')
-            if not conference_data or not conference_data.get('conferenceId'):
-                continue
-            
-            processed_events.append({
-                'id': event.get('id'),
-                'summary': event.get('summary'),
-                'conferenceId': conference_data.get('conferenceId'),
-                'invitees': event.get('attendees', []),
-                'attachments': event.get('attachments', [])
-            })
+            end_time_str = event.get('end', {}).get('dateTime')
+            if end_time_str:
+                end_time = datetime.datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
+                if end_time < now_aware:
+                    concluded_events.append(event)
         
-        logger.info(f"Found {len(processed_events)} events with conference IDs.")
-        return processed_events
+        logger.info(f"Found {len(concluded_events)} concluded events to process.")
+        return concluded_events
 
     except RefreshError as e:
         logger.error(f"Google credentials have expired or been revoked: {e}. Please re-authenticate by deleting token.json and running again.")
@@ -71,8 +63,6 @@ def attach_document_to_event(creds, event_id, file_id, file_details):
             logger.info(f"Attachment '{file_title}' already exists for event {event_id}. Skipping.")
             return None
 
-        # Manually construct the 'clean' URL, which mirrors the legacy 'alternateLink' format.
-        # This is the core of the hypothesis test: does the UI reject URLs with parameters?
         clean_file_url = f"https://docs.google.com/document/d/{file_id}/edit"
         logger.info(f"Using manually constructed clean URL for attachment: {clean_file_url}")
 
@@ -98,16 +88,46 @@ def attach_document_to_event(creds, event_id, file_id, file_details):
         return True
 
     except Exception as e:
-        logger.error(f"Failed to attach document to event {event_id}: {e}", exc_info=True)
-        return False
+        logger.error(f"An error occurred while attaching document to event {event_id}: {e}", exc_info=True)
+        return None
 
 def get_event_details(creds, event_id):
-    """Fetches the full details of a single event for diagnostic purposes."""
+    """Fetches detailed information for a single event."""
     try:
         service = build('calendar', 'v3', credentials=creds)
         event = service.events().get(calendarId='primary', eventId=event_id).execute()
-        logger.info(f"Successfully fetched details for event {event_id}")
         return event
     except Exception as e:
-        logger.error(f"Failed to get details for event {event_id}: {e}", exc_info=True)
+        logger.error(f"Failed to fetch details for event {event_id}: {e}", exc_info=True)
         return None
+
+def remove_attachment_from_event(creds, event_id, attachment_title):
+    """Removes a specific attachment from a calendar event by its title."""
+    try:
+        service = build('calendar', 'v3', credentials=creds)
+        
+        event = service.events().get(calendarId='primary', eventId=event_id).execute()
+        attachments = event.get('attachments', [])
+        
+        # Find and remove the attachment with the matching title
+        updated_attachments = [att for att in attachments if att.get('title') != attachment_title]
+        
+        if len(updated_attachments) == len(attachments):
+            logger.warning(f"Attachment with title '{attachment_title}' not found in event {event_id}. Nothing to remove.")
+            return False
+
+        body = {'attachments': updated_attachments}
+        
+        service.events().patch(
+            calendarId='primary',
+            eventId=event_id,
+            body=body,
+            supportsAttachments=True
+        ).execute()
+        
+        logger.info(f"Successfully removed attachment '{attachment_title}' from event {event_id}.")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to remove attachment from event {event_id}: {e}", exc_info=True)
+        return False
