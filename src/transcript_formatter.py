@@ -24,4 +24,19 @@ def format_transcript(transcript_data, meeting_name="Meeting Transcript"):
         # Add the text with its timestamp
         lines.append(f"[{timestamp}] {text}")
 
-    return "\n".join(lines)
+    formatted_lines = lines
+    return "\n".join(formatted_lines)
+
+def format_highlights(highlights_data: dict) -> str:
+    """Formats the highlights data into a readable string."""
+    if not highlights_data or 'data' not in highlights_data or not highlights_data['data']:
+        return ""
+
+    formatted_lines = ["--- AI Notes (Highlights) ---"]
+    for note in highlights_data['data']:
+        text = note.get('text', 'No content')
+        start_time = note.get('startTime', 0)
+        timestamp = str(datetime.timedelta(seconds=int(start_time)))
+        formatted_lines.append(f"[{timestamp}] {text}")
+    
+    return "\n".join(formatted_lines)
