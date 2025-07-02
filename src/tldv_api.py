@@ -51,8 +51,7 @@ def get_highlights_by_meeting_id(meeting_id: str):
     """Fetches the highlights (AI Notes) for a given meeting ID from the tldv API."""
     api_key = os.environ.get("TLDV_API_KEY")
     if not api_key:
-        logger.error("TLDV_API_KEY is not set.")
-        return None
+        raise ValueError("Missing TLDV_API_KEY environment variable")
 
     headers = {
         "x-api-key": api_key,

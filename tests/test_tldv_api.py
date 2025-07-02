@@ -7,7 +7,7 @@ import requests
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src.tldv_api import get_meetings, get_transcript_by_meeting_id
+from src.tldv_api import get_meetings, get_transcript_by_meeting_id, get_highlights_by_meeting_id
 
 class TestTldvApi(unittest.TestCase):
 
@@ -56,6 +56,29 @@ class TestTldvApi(unittest.TestCase):
         transcript = get_transcript_by_meeting_id('123')
         self.assertIsNone(transcript)
 
+    @patch.dict(os.environ, {"TLDV_API_KEY": "test_key"})
+    @patch('src.tldv_api.requests.get')
+    def test_get_highlights_success(self, mock_get):
+        """Test successful fetching of highlights."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {'highlights': [{'timestamp': 10, 'text': 'Important point'}]}
+        mock_get.return_value = mock_response
+
+        highlights = get_highlights_by_meeting_id('123')
+        self.assertIsNotNone(highlights)
+        self.assertEqual(len(highlights['highlights']), 1)
+        self.assertEqual(highlights['highlights'][0]['text'], 'Important point')
+
+    @patch.dict(os.environ, {"TLDV_API_KEY": "test_key"})
+    @patch('src.tldv_api.requests.get')
+    def test_get_highlights_failure(self, mock_get):
+        """Test failure in fetching highlights."""
+        mock_get.side_effect = requests.exceptions.RequestException("API Error")
+
+        highlights = get_highlights_by_meeting_id('123')
+        self.assertIsNone(highlights)
+
     def test_missing_api_key(self):
         """Test that a ValueError is raised if the API key is missing."""
         # Ensure the environment variable is not set for this test
@@ -66,6 +89,8 @@ class TestTldvApi(unittest.TestCase):
             get_meetings()
         with self.assertRaises(ValueError):
             get_transcript_by_meeting_id('123')
+        with self.assertRaises(ValueError):
+            get_highlights_by_meeting_id('123')
 
 if __name__ == '__main__':
     unittest.main()
