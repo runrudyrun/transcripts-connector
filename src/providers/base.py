@@ -32,9 +32,12 @@ class BaseConnector(ABC):
     """
 
     @abstractmethod
-    def get_meetings(self) -> List['Meeting']:
+    def get_meetings(self, days: float) -> List['Meeting']:
         """
-        Fetches a list of available meetings from the source.
+        Fetches a list of available meetings from the source within a given timeframe.
+
+        Args:
+            days: The number of past days to search for meetings.
 
         Returns:
             A list of Meeting objects.

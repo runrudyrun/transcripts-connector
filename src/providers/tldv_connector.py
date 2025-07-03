@@ -1,6 +1,6 @@
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 
 from src.logger import logger
@@ -36,9 +36,11 @@ class TldvConnector(BaseConnector):
             logger.error(f"An error occurred while requesting {url}: {e}")
         return None
 
-    def get_meetings(self) -> List[Meeting]:
-        """Fetches all meetings from the TLDV API."""
-        meetings_data = self._make_request(f"{API_BASE_URL}/meetings")
+    def get_meetings(self, days: float) -> List[Meeting]:
+        """Fetches meetings from the TLDV API within a specified number of past days."""
+        from_date = datetime.now() - timedelta(days=days)
+        url = f"{API_BASE_URL}/meetings?from_date={from_date.isoformat()}"
+        meetings_data = self._make_request(url)
         if not meetings_data or 'results' not in meetings_data:
             return []
 
@@ -68,28 +70,26 @@ class TldvConnector(BaseConnector):
             )
         return meetings
 
-    def get_transcript(self, meeting_id: str) -> Optional[Transcript]:
+    def get_transcript(self, meeting: Meeting) -> Optional[Transcript]:
         """
         Fetches and formats the transcript for a specific meeting.
         """
-        transcript_data = self._make_request(f"{API_BASE_URL}/meetings/{meeting_id}/transcript")
+        transcript_data = self._make_request(f"{API_BASE_URL}/meetings/{meeting.id}/transcript")
         if not transcript_data:
             return None
-        
-        # We need the meeting name for the formatter
-        meeting_details = self._make_request(f"{API_BASE_URL}/meetings/{meeting_id}")
-        meeting_name = meeting_details.get('name', "Meeting Transcript") if meeting_details else "Meeting Transcript"
 
-        formatted_text = format_transcript(transcript_data, meeting_name)
+        formatted_text = format_transcript(transcript_data, meeting.name)
         return Transcript(text=formatted_text, original_data=transcript_data)
 
-    def get_notes(self, meeting_id: str) -> Optional[Note]:
+    def get_notes(self, meeting: Meeting) -> Optional[Note]:
         """
         Fetches and formats the highlights (AI Notes) for a specific meeting.
         """
-        highlights_data = self._make_request(f"{API_BASE_URL}/meetings/{meeting_id}/highlights")
+        highlights_data = self._make_request(f"{API_BASE_URL}/meetings/{meeting.id}/highlights")
         if not highlights_data:
-            return None # 404 is handled in _make_request, so this is for other errors or empty responses
+            return None
 
         formatted_content = format_highlights(highlights_data)
+        if not formatted_content:
+            return None
         return Note(content=formatted_content, original_data=highlights_data)

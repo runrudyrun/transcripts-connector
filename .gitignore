@@ -4,6 +4,7 @@ token.json
 
 # Python cache
 __pycache__/
+local_
 *.pyc
 
 # IDE files

@@ -1,7 +1,7 @@
 import os
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 
 from src.logger import logger
@@ -55,10 +55,24 @@ class LocalFileConnector(BaseConnector):
 
         return parsed_data
 
-    def get_meetings(self) -> List[Meeting]:
-        """Scans the local directory for transcript files to represent as meetings."""
+    def get_meetings(self, days: float) -> List[Meeting]:
+        """Scans the local directory for transcript files modified within a given number of days."""
         meetings = []
+        meetings_found_in_scan = 0
+        time_threshold = datetime.now() - timedelta(days=days)
+
         for filename in os.listdir(self.path):
+            meetings_found_in_scan += 1
+            file_path = os.path.join(self.path, filename)
+
+            try:
+                modified_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+                if modified_time < time_threshold:
+                    continue  # Skip files that are too old
+            except OSError as e:
+                logger.warning(f"Could not get modification time for {filename}: {e}")
+                continue
+
             if not filename.endswith(('.txt', '.md')):
                 continue
             
@@ -84,27 +98,12 @@ class LocalFileConnector(BaseConnector):
             except (KeyError, ValueError) as e:
                 logger.warning(f"Skipping file {filename} due to missing or invalid data: {e}")
 
-        logger.info(f"Found {len(meetings)} valid meeting files in {self.path}")
+        logger.info(f"Scanned {meetings_found_in_scan} files, found {len(meetings)} valid and recent meetings in {self.path}")
         return meetings
 
-    def _get_data_for_meeting(self, meeting_id: str) -> Optional[Dict[str, Any]]:
-        """Helper to get parsed data, from cache or by parsing the file."""
-        if meeting_id in self._cache:
-            return self._cache[meeting_id]
-        
-        file_path = os.path.join(self.path, meeting_id)
-        if os.path.exists(file_path):
-            parsed_data = self._parse_grain_file(file_path)
-            if parsed_data:
-                self._cache[meeting_id] = parsed_data
-            return parsed_data
-        
-        logger.error(f"Could not find file for meeting_id: {meeting_id}")
-        return None
-
-    def get_transcript(self, meeting_id: str) -> Optional[Transcript]:
+    def get_transcript(self, meeting: Meeting) -> Optional[Transcript]:
         """Reads and formats a transcript from a local file."""
-        data = self._get_data_for_meeting(meeting_id)
+        data = meeting.original_data
         if not data or "Transcript (Encoded JSON)" not in data:
             return None
 
@@ -115,16 +114,15 @@ class LocalFileConnector(BaseConnector):
             # The format from Grain seems to be a list of dicts with 'speaker', 'text'.
             # Our formatter expects a specific structure, let's adapt.
             formatted_transcript_data = {'data': transcript_data}
-            meeting_name = data.get("Recording Title", "Meeting Transcript")
-            formatted_text = format_transcript(formatted_transcript_data, meeting_name)
+            formatted_text = format_transcript(formatted_transcript_data, meeting.name)
             return Transcript(text=formatted_text, original_data=transcript_data)
         except (json.JSONDecodeError, KeyError) as e:
-            logger.error(f"Failed to parse or format transcript for {meeting_id}: {e}")
+            logger.error(f"Failed to parse or format transcript for {meeting.id}: {e}")
             return None
 
-    def get_notes(self, meeting_id: str) -> Optional[Note]:
+    def get_notes(self, meeting: Meeting) -> Optional[Note]:
         """Reads AI notes (summary) from a local file."""
-        data = self._get_data_for_meeting(meeting_id)
+        data = meeting.original_data
         if not data or "Recording Summary Overview" not in data:
             return None
         

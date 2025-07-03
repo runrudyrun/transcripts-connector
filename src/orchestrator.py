@@ -16,54 +16,39 @@ class Orchestrator:
         self.connector = connector
         self.google_api = google_api
 
-    def run(self, days: int):
-        """Main execution flow."""
-        logger.info(f"Starting the transcript connector...")
-        logger.info(f"Using connector: {self.connector.__class__.__name__}")
-
+    def authenticate(self) -> bool:
+        """Authenticates with Google and returns True on success."""
         logger.info("Step 1: Authenticating with Google...")
         if not self.google_api.authenticate():
             logger.error("Failed to authenticate with Google. Exiting.")
-            return
+            return False
         logger.info("Successfully authenticated with Google.")
+        return True
 
-        logger.info(f"Searching for events in the last {days} days...")
-        events = self._get_concluded_events(days)
-        if not events:
-            logger.info("No concluded events found to process.")
-            return
-        logger.info(f"Found {len(events)} concluded events to process.")
-
-        logger.info(f"Step 3: Fetching meetings from {self.connector.__class__.__name__}...")
-        meetings = self.connector.get_meetings()
-        if not meetings:
-            logger.warning(f"No meetings found in {self.connector.__class__.__name__}.")
-            return
-
-        matched_pairs = self._match_events_with_recordings(events, meetings)
-        if not matched_pairs:
-            logger.info("No matching events and recordings found.")
-            logger.info("\nProcess finished.")
-            return
-
-        logger.info("\n--- Starting Event Processing ---")
-        logger.info(f"Using ignore keywords: {IGNORE_KEYWORDS}")
-        for event, meeting in matched_pairs:
-            self._process_event_and_recording(event, meeting)
-        
-        logger.info("\nProcess finished.")
-
-    def _get_concluded_events(self, days: int) -> List[Dict[str, Any]]:
+    def fetch_calendar_events(self, days: float) -> List[Dict[str, Any]]:
         """Fetches calendar events that have concluded within the given timeframe."""
-        logger.info("Step 2: Fetching concluded calendar events...")
+        logger.info(f"Step 2: Fetching concluded calendar events from the last {days:.2f} days...")
         now = datetime.now(timezone.utc)
         time_min = now - timedelta(days=days)
-        logger.info(f"Searching for concluded events from the last {days} days, {time_min.strftime('%H:%M:%S')}...")
-        return self.google_api.get_concluded_events(time_min)
+        logger.info(f"Searching for concluded events from {time_min.strftime('%Y-%m-%d %H:%M:%S')} UTC...")
+        events = self.google_api.get_concluded_events(time_min)
+        if not events:
+            logger.info("No concluded events found to process.")
+        else:
+            logger.info(f"Found {len(events)} concluded events to process.")
+        return events
 
-    def _match_events_with_recordings(self, events: List[Dict[str, Any]], meetings: List[Meeting]) -> List[Tuple[Dict[str, Any], Meeting]]:
+    def fetch_meetings_from_connector(self, days: float) -> List[Meeting]:
+        """Fetches meetings from the configured connector."""
+        logger.info(f"Step 3: Fetching meetings from {self.connector.__class__.__name__} for the last {days:.2f} days...")
+        meetings = self.connector.get_meetings(days=days)
+        if not meetings:
+            logger.warning(f"No meetings found in {self.connector.__class__.__name__}.")
+        return meetings
+
+    def match_events_and_meetings(self, events: List[Dict[str, Any]], meetings: List[Meeting]) -> List[Tuple[Dict[str, Any], Meeting]]:
         """Matches calendar events with recordings using a two-stage approach."""
-        logger.info(f"\n--- Matching Calendar events with {self.connector.__class__.__name__} recordings ---")
+        logger.info(f"\n--- Matching {len(events)} events with {len(meetings)} {self.connector.__class__.__name__} recordings ---")
         
         id_matched_pairs, remaining_events, remaining_meetings = [], list(events), list(meetings)
         try:
@@ -72,14 +57,78 @@ class Orchestrator:
             logger.info("Conference ID matching stage finished successfully.")
         except Exception as e:
             logger.error(f"An unexpected error occurred during conference ID matching: {e}", exc_info=True)
-            # In case of error, we fall back to time-based matching with all original events and meetings
-            remaining_events = events
-            remaining_meetings = meetings
+            remaining_events, remaining_meetings = events, meetings
 
         logger.info(f"Attempting to match {len(remaining_events)} remaining events and {len(remaining_meetings)} recordings by time...")
         time_matched_pairs, _, _ = self._match_by_time_and_title(remaining_events, remaining_meetings)
         
-        return id_matched_pairs + time_matched_pairs
+        matched_pairs = id_matched_pairs + time_matched_pairs
+        if not matched_pairs:
+            logger.info("No matching events and recordings found.")
+        return matched_pairs
+
+    def process_attachment(self, event: Dict[str, Any], meeting: Meeting):
+        """Processes a single matched event-recording pair."""
+        event_summary = event.get('summary', 'No Title')
+        event_id = event.get('id')
+        logger.info(f"\n--- Processing Attachment for: '{event_summary}' (Event ID: {event_id}) ---")
+        logger.info(f"Using matched recording: '{meeting.name}' (ID: {meeting.id}).")
+
+        if any(keyword.lower() in event_summary.lower() for keyword in IGNORE_KEYWORDS):
+            logger.info(f"Event '{event_summary}' is in the ignore list, skipping.")
+            return
+        
+        # Process Transcript
+        if self.google_api.has_attachment(event.get('attachments', []), 'Transcript for'):
+            logger.info(f"Event '{event_summary}' already has a transcript attachment, skipping transcript.")
+        else:
+            transcript = self.connector.get_transcript(meeting)
+            if transcript:
+                logger.info("Transcript found. Processing...")
+                doc_title = f"Transcript for {event_summary} ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+                self.google_api.create_and_attach_doc(event_id, doc_title, transcript.text)
+            else:
+                logger.info("No transcript found for this recording.")
+
+        # Process AI Notes
+        if self.google_api.has_attachment(event.get('attachments', []), 'AI Notes for'):
+            logger.info(f"Event '{event_summary}' already has an AI Notes attachment, skipping notes.")
+        else:
+            ai_notes = self.connector.get_notes(meeting)
+            if ai_notes:
+                logger.info("AI Notes found. Processing...")
+                doc_title = f"AI Notes for {event_summary} ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+                self.google_api.create_and_attach_doc(event_id, doc_title, ai_notes.content)
+            else:
+                logger.info("No AI notes found for this recording.")
+
+    def run_cli(self, days: float):
+        """Main execution flow for the command-line interface."""
+        logger.info(f"Starting the transcript connector...")
+        logger.info(f"Using connector: {self.connector.__class__.__name__}")
+
+        if not self.authenticate():
+            return
+
+        events = self.fetch_calendar_events(days)
+        if not events:
+            return
+
+        meetings = self.fetch_meetings_from_connector(days)
+        if not meetings:
+            return
+
+        matched_pairs = self.match_events_and_meetings(events, meetings)
+        if not matched_pairs:
+            logger.info("\nProcess finished.")
+            return
+
+        logger.info("\n--- Starting Event Processing ---")
+        logger.info(f"Using ignore keywords: {IGNORE_KEYWORDS}")
+        for event, meeting in matched_pairs:
+            self.process_attachment(event, meeting)
+        
+        logger.info("\nProcess finished.")
 
     def _match_by_conference_id(self, events: List[Dict[str, Any]], meetings: List[Meeting]) -> Tuple[List[Tuple[Dict[str, Any], Meeting]], List[Dict[str, Any]], List[Meeting]]:
         """Matches events and meetings based on Google Meet conference ID."""
@@ -147,38 +196,3 @@ class Orchestrator:
         unmatched_meetings = [m for m in meetings if m.id not in meeting_ids_matched]
         logger.info(f"--- Time-Based Matching Finished: {len(matched_pairs)} pairs matched. ---")
         return matched_pairs, unmatched_events, unmatched_meetings
-
-    def _process_event_and_recording(self, event: Dict[str, Any], meeting: Meeting):
-        """Processes a single matched event-recording pair."""
-        event_summary = event.get('summary', 'No Title')
-        event_id = event.get('id')
-        logger.info(f"\nProcessing pair: '{event_summary}' (Event ID: {event_id})")
-        logger.info(f"Using matched recording: '{meeting.name}' (ID: {meeting.id}).")
-
-        if any(keyword.lower() in event_summary.lower() for keyword in IGNORE_KEYWORDS):
-            logger.info(f"Event '{event_summary}' is in the ignore list, skipping.")
-            return
-        
-        # Process Transcript
-        if self.google_api.has_attachment(event.get('attachments', []), 'Transcript for'):
-            logger.info(f"Event '{event_summary}' already has a transcript attachment, skipping transcript.")
-        else:
-            transcript = self.connector.get_transcript(meeting.id)
-            if transcript:
-                logger.info("Transcript found. Processing...")
-                doc_title = f"Transcript for {event_summary} ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
-                self.google_api.create_and_attach_doc(event_id, doc_title, transcript.text)
-            else:
-                logger.info("No transcript found for this recording.")
-
-        # Process AI Notes
-        if self.google_api.has_attachment(event.get('attachments', []), 'AI Notes for'):
-            logger.info(f"Event '{event_summary}' already has an AI Notes attachment, skipping notes.")
-        else:
-            notes = self.connector.get_notes(meeting.id)
-            if notes:
-                logger.info("AI Notes found. Processing...")
-                doc_title = f"AI Notes for {event_summary} ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
-                self.google_api.create_and_attach_doc(event_id, doc_title, notes.content)
-            else:
-                logger.info("No AI notes found for this recording.")

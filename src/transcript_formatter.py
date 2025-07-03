@@ -29,13 +29,16 @@ def format_transcript(transcript_data, meeting_name="Meeting Transcript"):
 
 def format_highlights(highlights_data: dict) -> str:
     """Formats the highlights data into a readable string."""
-    if not highlights_data or not highlights_data.get('highlights'):
-        return "AI Notes (Highlights):\n\nNo highlights were generated for this meeting."
+    # The key in the response is 'data', not 'highlights'
+    if not highlights_data or not highlights_data.get('data'):
+        return ""
 
     formatted_lines = ["AI Notes (Highlights):\n"]
-    for note in highlights_data['highlights']:
+    # The list of notes is in the 'data' key
+    for note in highlights_data['data']:
         text = note.get('text', 'No content')
-        start_time = note.get('timestamp', 0)
+        # The key for the timestamp is 'startTime'
+        start_time = note.get('startTime', 0)
         seconds = int(start_time)
         hours, remainder = divmod(seconds, 3600)
         minutes, seconds = divmod(remainder, 60)

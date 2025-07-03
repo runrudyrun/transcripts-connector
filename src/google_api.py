@@ -154,3 +154,48 @@ class GoogleApi:
 
         except Exception as e:
             logger.error(f"Failed during doc creation/attachment for '{doc_title}': {e}", exc_info=True)
+
+    def delete_google_doc(self, file_id: str) -> bool:
+        """Deletes a Google Doc file by its ID."""
+        try:
+            self.drive_service.files().delete(fileId=file_id, supportsAllDrives=True).execute()
+            logger.info(f"Successfully deleted Google Doc with ID: {file_id}")
+            return True
+        except HttpError as error:
+            if error.resp.status == 404:
+                logger.warning(f"Google Doc with ID {file_id} not found. Assuming already deleted.")
+                return True
+            logger.error(f"Failed to delete Google Doc {file_id}: {error}")
+            return False
+        except Exception as e:
+            logger.error(f"An unexpected error occurred while deleting doc {file_id}: {e}", exc_info=True)
+            return False
+
+    def remove_attachment_from_event(self, event_id: str, attachment_title: str) -> bool:
+        """Removes an attachment from a calendar event by its title."""
+        try:
+            event = self.calendar_service.events().get(calendarId='primary', eventId=event_id).execute()
+            current_attachments = event.get('attachments', [])
+            
+            if not any(att.get('title') == attachment_title for att in current_attachments):
+                logger.warning(f"Attachment '{attachment_title}' not found on event {event_id}. Nothing to remove.")
+                return True
+
+            updated_attachments = [att for att in current_attachments if att.get('title') != attachment_title]
+            
+            body = {'attachments': updated_attachments}
+            self.calendar_service.events().patch(
+                calendarId='primary', 
+                eventId=event_id, 
+                body=body, 
+                supportsAttachments=True
+            ).execute()
+            
+            logger.info(f"Successfully removed attachment '{attachment_title}' from event {event_id}")
+            return True
+        except HttpError as error:
+            logger.error(f"Failed to remove attachment '{attachment_title}' from event {event_id}: {error}")
+            return False
+        except Exception as e:
+            logger.error(f"An unexpected error occurred while removing attachment from event {event_id}: {e}", exc_info=True)
+            return False
