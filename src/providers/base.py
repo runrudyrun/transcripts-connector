@@ -42,12 +42,12 @@ class BaseConnector(ABC):
         pass
 
     @abstractmethod
-    def get_transcript(self, meeting_id: str) -> Optional['Transcript']:
+    def get_transcript(self, meeting: 'Meeting') -> Optional['Transcript']:
         """
         Fetches the full transcript for a specific meeting.
 
         Args:
-            meeting_id: The unique identifier for the meeting from the provider.
+            meeting: The Meeting object for which to fetch the transcript.
 
         Returns:
             A Transcript object or None if not found.
@@ -55,12 +55,12 @@ class BaseConnector(ABC):
         pass
 
     @abstractmethod
-    def get_notes(self, meeting_id: str) -> Optional['Note']:
+    def get_notes(self, meeting: 'Meeting') -> Optional['Note']:
         """
         Fetches summarized notes or highlights for a specific meeting.
 
         Args:
-            meeting_id: The unique identifier for the meeting from the provider.
+            meeting: The Meeting object for which to fetch the notes.
 
         Returns:
             A Note object or None if not found.
