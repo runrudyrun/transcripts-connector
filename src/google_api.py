@@ -164,7 +164,6 @@ class GoogleApi:
             logger.info(f"Searching for transcript files in Google Drive folder: {self.target_folder_id}")
             query = (
                 f"'{self.target_folder_id}' in parents and "
-                f"(mimeType='text/plain' or mimeType='application/vnd.google-apps.document') and "
                 f"trashed = false"
             )
             results = self.drive_service.files().list(

@@ -33,6 +33,11 @@ def main():
         action="store_true",
         help="Perform a dry run without attaching any documents to calendar events."
     )
+    parser.add_argument(
+        "--force-ai",
+        action="store_true",
+        help="Force the use of AI for matching, skipping other methods."
+    )
     args = parser.parse_args()
 
     try:
@@ -55,7 +60,7 @@ def main():
         orchestrator = Orchestrator(connector, google_api)
         days_to_process = args.hours / 24.0
         logger.info(f"Processing meetings from the last {args.hours} hours ({days_to_process:.2f} days).")
-        orchestrator.run_cli(days=days_to_process, dry_run=args.dry_run)
+        orchestrator.run_cli(days=days_to_process, dry_run=args.dry_run, force_ai=args.force_ai)
 
     except Exception as e:
         logger.critical(f"An unexpected error occurred in the main function: {e}", exc_info=True)

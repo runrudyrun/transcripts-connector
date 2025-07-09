@@ -48,26 +48,32 @@ class Orchestrator:
             logger.warning(f"No meetings found in {self.connector.__class__.__name__}.")
         return meetings
 
-    def match_events_and_meetings(self, events: List[Dict[str, Any]], meetings: List[Meeting]) -> List[Tuple[Dict[str, Any], Meeting]]:
-        """Matches calendar events with recordings using a three-stage approach."""
+    def match_events_and_meetings(self, events: List[Dict[str, Any]], meetings: List[Meeting], force_ai: bool = False) -> List[Tuple[Dict[str, Any], Meeting]]:
+        """Matches calendar events with recordings using a multi-stage approach."""
         logger.info(f"\n--- Matching {len(events)} events with {len(meetings)} {self.connector.__class__.__name__} recordings ---")
         
         all_matches = []
         unmatched_events, unmatched_meetings = list(events), list(meetings)
 
-        # --- Stage 1: Match by comparing conference ID ---
-        stage1_matches, unmatched_events, unmatched_meetings = self._match_by_conference_id(unmatched_events, unmatched_meetings)
-        all_matches.extend(stage1_matches)
+        if force_ai:
+            logger.info("--- AI matching is forced, skipping standard matching methods. ---")
+        else:
+            # --- Stage 1: Match by comparing conference ID ---
+            stage1_matches, unmatched_events, unmatched_meetings = self._match_by_conference_id(unmatched_events, unmatched_meetings)
+            all_matches.extend(stage1_matches)
 
-        # --- Stage 2: Match by comparing title and start time ---
-        stage2_matches, unmatched_events, unmatched_meetings = self._match_by_time_and_title(unmatched_events, unmatched_meetings)
-        all_matches.extend(stage2_matches)
+            # --- Stage 2: Match by comparing title and start time ---
+            stage2_matches, unmatched_events, unmatched_meetings = self._match_by_time_and_title(unmatched_events, unmatched_meetings)
+            all_matches.extend(stage2_matches)
 
         # --- Stage 3: Match using AI for remaining items ---
         if unmatched_events and unmatched_meetings:
-            logger.info("Proceeding to AI-powered matching for remaining items.")
-            stage3_matches = self._match_by_ai(unmatched_events, unmatched_meetings)
+            stage3_matches, unmatched_events, unmatched_meetings = self._match_by_ai(unmatched_events, unmatched_meetings)
             all_matches.extend(stage3_matches)
+
+        logger.info(f"\n--- Matched {len(all_matches)} pairs ---")
+        for event, meeting in all_matches:
+            logger.info(f"  - Event: '{event.get('summary')}' matched with Meeting: '{meeting.name}'")
 
         final_unmatched_events_count = len(events) - len(all_matches)
         final_unmatched_meetings_count = len(meetings) - len(all_matches)
@@ -105,16 +111,46 @@ class Orchestrator:
         if self.google_api.has_attachment(event.get('attachments', []), 'AI Notes for'):
             logger.info(f"Event '{event_summary}' already has an AI Notes attachment, skipping notes.")
         else:
-            ai_notes = self.connector.get_notes(meeting)
-            if ai_notes and ai_notes.content:
-                notes_doc_title = f"{event_summary} - AI Notes"
-                if dry_run:
-                    logger.info(f"[DRY RUN] Would attach notes to event '{event_summary}' with title '{notes_doc_title}'.")
-                else:
+            # In the new flow, we always use the raw transcript text.
+            # The get_notes method is deprecated for these connectors.
+            transcript = self.connector.get_transcript(meeting)
+            if transcript and transcript.text:
+                logger.info(f"Using raw file content for '{meeting.name}'.")
+                # Use the meeting's name (derived from filename) for the doc title
+                notes_doc_title = f"Notes for {meeting.name}"
+                if not dry_run:
                     logger.info(f"Attaching notes to event '{event_summary}'...")
-                    self.google_api.create_and_attach_google_doc(event, notes_doc_title, ai_notes.content)
+                    self.google_api.create_and_attach_google_doc(event, notes_doc_title, transcript.text)
 
-    def run_cli(self, days: float, dry_run: bool = False):
+    def _process_matches(self, matched_pairs: List[Tuple[Dict[str, Any], Meeting]], dry_run: bool):
+        """Processes matched pairs to generate notes and attach them to calendar events."""
+        if not matched_pairs:
+            return
+
+        logger.info("\n--- Step 4: Processing matched pairs ---")
+        for event, meeting in matched_pairs:
+            event_summary = event.get('summary', 'Untitled Event')
+
+            # Check if event already has our notes attached
+            if self.google_api.has_attachment(event.get('attachments', []), 'Notes for'):
+                logger.info(f"Event '{event_summary}' already has a notes attachment, skipping.")
+                continue
+
+            # In the new flow, we always use the raw transcript text.
+            transcript = self.connector.get_transcript(meeting)
+            if not transcript or not transcript.text:
+                logger.warning(f"Skipping attachment for '{meeting.name}' because it has no content.")
+                continue
+
+            logger.info(f"Using raw file content for '{meeting.name}'.")
+            notes_doc_title = f"Notes for {meeting.name}"
+            if dry_run:
+                logger.info(f"[DRY RUN] Would attach file content to event '{event_summary}'.")
+            else:
+                logger.info(f"Attaching notes to event '{event_summary}'...")
+                self.google_api.create_and_attach_google_doc(event, notes_doc_title, transcript.text)
+
+    def run_cli(self, days: float, dry_run: bool = False, force_ai: bool = False):
         """Main execution flow for the command-line interface."""
         if dry_run:
             logger.info("\n*** DRY RUN MODE ACTIVATED ***")
@@ -133,7 +169,7 @@ class Orchestrator:
         if not meetings:
             return
 
-        matched_pairs = self.match_events_and_meetings(events, meetings)
+        matched_pairs = self.match_events_and_meetings(events, meetings, force_ai=force_ai)
         if not matched_pairs:
             logger.info("\nProcess finished.")
             return
@@ -145,33 +181,29 @@ class Orchestrator:
 
         logger.info("\nProcess finished.")
 
-    def _match_by_ai(self, events: List[Dict[str, Any]], meetings: List[Meeting]) -> List[Tuple[Dict[str, Any], Meeting]]:
-        """Uses AI to match remaining meetings to events based on transcript content."""
-        matches = []
-        unmatched_meetings = list(meetings)
-        unmatched_events = list(events)
+    def _match_by_ai(self, unmatched_events: List[Dict[str, Any]], unmatched_meetings: List[Meeting]) -> Tuple[List[Tuple[Dict[str, Any], Meeting]], List[Dict[str, Any]], List[Meeting]]:
+        """Uses AI to match remaining events and meetings based on raw file content."""
+        if not self.ai_mapper:
+            return [], unmatched_events, unmatched_meetings
 
-        for meeting in unmatched_meetings[:]: # Iterate over a copy
-            if not unmatched_events:
-                break # No more events to match against
+        logger.info("Proceeding to AI-powered matching for remaining items.")
+        ai_matches = []
+        still_unmatched_meetings = []
 
-            transcript = self.connector.get_transcript(meeting)
-            if not transcript or not transcript.text.strip():
-                logger.warning(f"Skipping AI matching for meeting '{meeting.name}' as it has no transcript content.")
-                continue
-
-            # Let the AI choose the best event
-            chosen_event = self.ai_mapper.choose_event(transcript.text, unmatched_events)
-
-            if chosen_event:
-                logger.info(f"AI matched meeting '{meeting.name}' to event '{chosen_event.get('summary')}'")
-                matches.append((chosen_event, meeting))
-                # Remove the matched items from the lists to avoid re-matching
-                unmatched_events.remove(chosen_event)
-                # The meeting is already handled by iterating over the copy
+        for meeting in unmatched_meetings:
+            # The new AI mapper takes the whole meeting object and the list of events
+            best_match_event = self.ai_mapper.match_meeting_to_event(meeting, unmatched_events)
+            
+            if best_match_event:
+                ai_matches.append((best_match_event, meeting))
+                # Important: remove the matched event so it cannot be matched again
+                unmatched_events.remove(best_match_event)
+            else:
+                still_unmatched_meetings.append(meeting)
         
-        logger.info(f"Found {len(matches)} matches using AI.")
-        return matches
+        logger.info(f"Found {len(ai_matches)} matches using AI.")
+        # Return the matches, and the remaining unmatched items
+        return ai_matches, unmatched_events, still_unmatched_meetings
 
     def _match_by_conference_id(self, events: List[Dict[str, Any]], meetings: List[Meeting]) -> Tuple[List[Tuple[Dict[str, Any], Meeting]], List[Dict[str, Any]], List[Meeting]]:
         """Matches events and meetings based on Google Meet conference ID."""
