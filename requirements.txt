@@ -1,5 +1,6 @@
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
-python-dotenv
+python-dotenv==1.0.1
+litellm==1.35.25
 requests

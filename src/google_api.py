@@ -155,6 +155,55 @@ class GoogleApi:
         except Exception as e:
             logger.error(f"Failed during doc creation/attachment for '{doc_title}': {e}", exc_info=True)
 
+    def list_transcript_files(self) -> List[Dict[str, Any]]:
+        """Lists potential transcript files from the target Google Drive folder."""
+        if not self.target_folder_id:
+            logger.error("GOOGLE_TARGET_FOLDER_ID is not set. Cannot list files from Drive.")
+            return []
+        try:
+            logger.info(f"Searching for transcript files in Google Drive folder: {self.target_folder_id}")
+            query = (
+                f"'{self.target_folder_id}' in parents and "
+                f"(mimeType='text/plain' or mimeType='application/vnd.google-apps.document') and "
+                f"trashed = false"
+            )
+            results = self.drive_service.files().list(
+                q=query,
+                pageSize=100, # Adjust as needed
+                fields="files(id, name, createdTime, mimeType)",
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True
+            ).execute()
+            files = results.get('files', [])
+            logger.info(f"Found {len(files)} potential transcript files in Google Drive.")
+            return files
+        except HttpError as error:
+            logger.error(f'An error occurred with Google Drive API while listing files: {error}')
+            return []
+        except Exception as e:
+            logger.error(f"An unexpected error occurred while listing Drive files: {e}", exc_info=True)
+            return []
+
+    def get_drive_file_content(self, file_id: str, mime_type: str) -> str:
+        """Fetches the text content of a file from Google Drive."""
+        try:
+            logger.info(f"Fetching content for file {file_id} with mimeType {mime_type}")
+            if mime_type == 'application/vnd.google-apps.document':
+                # Export Google Doc as plain text
+                request = self.drive_service.files().export_media(fileId=file_id, mimeType='text/plain')
+            else:
+                # Download other file types directly
+                request = self.drive_service.files().get_media(fileId=file_id)
+            
+            content_bytes = request.execute()
+            return content_bytes.decode('utf-8')
+        except HttpError as error:
+            logger.error(f'An error occurred fetching file content for {file_id}: {error}')
+            return ""
+        except Exception as e:
+            logger.error(f"An unexpected error occurred while fetching file content: {e}", exc_info=True)
+            return ""
+
     def delete_google_doc(self, file_id: str) -> bool:
         """Deletes a Google Doc file by its ID."""
         try:
