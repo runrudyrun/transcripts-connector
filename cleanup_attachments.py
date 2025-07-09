@@ -1,16 +1,14 @@
 import argparse
-import os
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
-from src.logger import logger
-from src.google_auth import get_credentials
-from src.google_calendar_api import find_concluded_events, remove_attachment_from_event
-from src.google_docs_api import delete_google_doc
 
-def find_attachments_to_clean(creds, time_delta, prefix):
+from src.logger import logger
+from src.google_api import GoogleApi
+
+def find_attachments_to_clean(google_api: GoogleApi, time_min: datetime, prefix: str):
     """Finds events and attachments that match the script's naming convention."""
-    logger.info(f"Searching for events in the last {time_delta} to find attachments with prefix '{prefix}'...")
-    events = find_concluded_events(creds, time_delta=time_delta)
+    logger.info(f"Searching for events since {time_min.strftime('%Y-%m-%d %H:%M')} to find attachments with prefix '{prefix}'...")
+    events = google_api.get_concluded_events(time_min=time_min)
     if not events:
         logger.info("No recent events found.")
         return []
@@ -22,7 +20,6 @@ def find_attachments_to_clean(creds, time_delta, prefix):
         for attachment in event.get('attachments', []):
             title = attachment.get('title')
             if title and title.startswith(prefix):
-                # Extract file ID from the URL
                 file_url = attachment.get('fileUrl', '')
                 file_id = file_url.split('/d/')[1].split('/')[0] if '/d/' in file_url else None
                 if file_id:
@@ -37,27 +34,30 @@ def find_attachments_to_clean(creds, time_delta, prefix):
 def main():
     """Main function to handle the cleanup process."""
     parser = argparse.ArgumentParser(description="Clean up attachments created by the transcript connector.")
-    parser.add_argument("--days", type=int, default=0, help="Number of past days to search for events.")
-    parser.add_argument("--hours", type=int, default=0, help="Number of past hours to search for events.")
+    parser.add_argument("--days", type=float, default=0, help="Number of past days to search for events.")
+    parser.add_argument("--hours", type=float, default=0, help="Number of past hours to search for events.")
     parser.add_argument("--prefix", type=str, default="Transcript for", help="The prefix of attachment titles to search for.")
     parser.add_argument("--dry-run", action='store_true', help="List attachments to be deleted without actually deleting them.")
     args = parser.parse_args()
 
-    time_delta = timedelta(days=args.days, hours=args.hours)
-    if time_delta.total_seconds() == 0:
-        time_delta = timedelta(days=7)
-        logger.info("No time window specified, defaulting to 7 days.")
+    total_hours = args.days * 24 + args.hours
+    if total_hours == 0:
+        total_hours = 24 * 7 # Default to 7 days
+        logger.info("No time window specified, defaulting to 7 days (168 hours).")
+    
+    time_min = datetime.now(timezone.utc) - timedelta(hours=total_hours)
 
     logger.info("--- Starting Attachment Cleanup Script ---")
     if args.dry_run:
         logger.info("Running in DRY-RUN mode. No files will be deleted.")
     
     load_dotenv()
-    creds = get_credentials()
-    if not creds:
+    google_api = GoogleApi()
+    if not google_api.authenticate():
+        logger.critical("Failed to authenticate with Google. Exiting.")
         return
 
-    items = find_attachments_to_clean(creds, time_delta, args.prefix)
+    items = find_attachments_to_clean(google_api, time_min, args.prefix)
 
     if not items:
         logger.info("No attachments matching the criteria were found.")
@@ -71,7 +71,6 @@ def main():
         logger.info("Dry-run finished. To delete these items, run the script again without the --dry-run flag.")
         return
 
-    # Deletion logic with confirmation
     confirm = input("\nProceed with deleting these files and attachments? (y/n): ")
     if confirm.lower() != 'y':
         logger.info("Cleanup cancelled by user.")
@@ -81,11 +80,9 @@ def main():
     success_count = 0
     for item in items:
         logger.info(f"Processing: {item['attachment_title']}")
-        # 1. Delete the Google Doc file
-        doc_deleted = delete_google_doc(creds, item['file_id'])
+        doc_deleted = google_api.delete_google_doc(item['file_id'])
         if doc_deleted:
-            # 2. Remove the attachment from the event
-            attachment_removed = remove_attachment_from_event(creds, item['event_id'], item['attachment_title'])
+            attachment_removed = google_api.remove_attachment_from_event(item['event_id'], item['attachment_title'])
             if attachment_removed:
                 logger.info(f"  -> Successfully deleted doc and removed attachment for '{item['event_summary']}'.")
                 success_count += 1
@@ -98,3 +95,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
