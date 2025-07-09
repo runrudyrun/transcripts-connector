@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-07-08
+
+### Added
+- **AI-Powered Matching**: Introduced a new `AIMapper` class that uses an LLM (via `litellm`) to match transcripts to calendar events based on their raw text content.
+- **Force AI Flag**: Added a `--force-ai` command-line argument to bypass standard matching logic and use the AI mapper exclusively.
+
+### Changed
+- **AI Prompt Engineering**: Refined the prompt sent to the LLM to ensure it returns a structured, predictable response (either a numeric index or 'None'), improving reliability.
+
+### Fixed
+- **Dependency Conflicts**: Resolved complex dependency issues between `litellm` and `openai`. The project now uses versions compatible with each other and with Python 3.13.
+- **Python 3.13 Compatibility**: Fixed a `ModuleNotFoundError` for `imghdr` by upgrading `litellm` to a version where this legacy module is no longer used.
+
+
 ### Added
 - Initial project structure with stubs for Google APIs (Docs, Calendar).
 - TLDV API integration to fetch meetings and transcripts.

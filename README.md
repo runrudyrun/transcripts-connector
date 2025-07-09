@@ -9,6 +9,7 @@ This tool automates the process of fetching meeting transcripts and AI Notes (hi
 - **Flexible Event Fetching**: Scans Google Calendar for concluded events within a configurable time window using `--days` or `--hours` flags. Defaults to the last 7 days.
 - **Configurable Filtering**: Uses a customizable list of keywords in the `.env` file (`IGNORE_KEYWORDS`) to exclude specific meetings (e.g., "1:1", "private") from processing.
 - **Robust Matching Logic**: Implements a two-stage matching process to accurately pair calendar events with TLDV recordings, first by conference ID and then by time proximity.
+- **AI-Powered Matching**: Includes an optional, powerful AI-based matching engine (`--force-ai`) to accurately link transcripts to events based on content, even when standard metadata is missing.
 - **Automated Sharing & Attachment**: Shares the generated Google Docs publicly (view-only) and attaches them to the calendar event.
 - **Safe Cleanup Utility**: Includes a powerful command-line script (`cleanup_attachments.py`) to safely find and remove generated documents and their calendar attachments, with support for time window and prefix filtering.
 
@@ -41,6 +42,11 @@ This tool automates the process of fetching meeting transcripts and AI Notes (hi
 
     # Keywords to ignore meetings (case-insensitive, comma-separated)
     IGNORE_KEYWORDS="1:1, 1-1, catch-up, private"
+
+    # Optional: AI-Powered Matching via LiteLLM
+    # See https://docs.litellm.ai/docs/proxy_server for setup instructions
+    LITELLM_API_BASE=your_litellm_proxy_api_base_url
+    LITELLM_API_KEY=your_litellm_proxy_api_key
     ```
 
 4.  **Authenticate with Google:**
@@ -68,6 +74,15 @@ Run the main connector to fetch transcripts and notes. You can specify a time wi
 
   # Search for meetings in the last 12 hours
   python main.py --hours 12
+
+- **Forcing AI-Powered Matching:**
+  If the standard matching logic fails or you need to match a transcript based on its content, you can use the `--force-ai` flag. This bypasses the standard methods and uses an LLM to analyze the transcript content and find the best calendar event match.
+
+  **Note:** This requires `LITELLM_API_BASE` and `LITELLM_API_KEY` to be set in your `.env` file.
+  ```bash
+  # Force AI matching for events in the last 24 hours
+  python main.py --hours 24 --force-ai
+  ```
   ```
 
 ### Cleanup Script (`cleanup_attachments.py`)
