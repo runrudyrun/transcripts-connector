@@ -1,6 +1,9 @@
 import argparse
 from dotenv import load_dotenv
 
+# Load environment variables from .env file at the very beginning of the script
+load_dotenv()
+
 from src.logger import logger
 from src.providers.tldv_connector import TldvConnector
 from src.providers.local_file_connector import LocalFileConnector
@@ -33,7 +36,6 @@ def main():
     args = parser.parse_args()
 
     try:
-        load_dotenv()
 
         # --- Setup ---
         logger.info(f"Using {args.connector} connector.")

@@ -8,13 +8,15 @@ from src.logger import logger
 from src.providers.base import BaseConnector, Meeting, Transcript, Note
 from src.transcript_formatter import format_transcript
 
-LOCAL_FILES_PATH = os.environ.get("LOCAL_FILES_PATH", "./local_transcripts")
-
 class LocalFileConnector(BaseConnector):
     """Connector for reading transcripts and notes from local files."""
 
     def __init__(self):
-        self.path = LOCAL_FILES_PATH
+        # Get the raw path from environment variable, default to ./local_transcripts
+        raw_path = os.environ.get("LOCAL_FILES_PATH", "./local_transcripts")
+        # Expand the user's home directory if the tilde '~' is used
+        self.path = os.path.expanduser(raw_path)
+        
         if not os.path.isdir(self.path):
             logger.info(f"Local files path '{self.path}' not found, creating it.")
             os.makedirs(self.path)

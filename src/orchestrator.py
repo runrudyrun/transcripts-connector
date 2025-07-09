@@ -60,7 +60,7 @@ class Orchestrator:
         all_matches.extend(stage1_matches)
 
         # --- Stage 2: Match by comparing title and start time ---
-        unmatched_events, unmatched_meetings, stage2_matches = self._match_by_time_and_title(unmatched_events, unmatched_meetings)
+        stage2_matches, unmatched_events, unmatched_meetings = self._match_by_time_and_title(unmatched_events, unmatched_meetings)
         all_matches.extend(stage2_matches)
 
         # --- Stage 3: Match using AI for remaining items ---
@@ -235,7 +235,7 @@ class Orchestrator:
                     break
             if not found_match:
                 unmatched_events.append(event)
-
+        
         unmatched_meetings = [m for m in meetings if m.id not in meeting_ids_matched]
         logger.info(f"--- Time-Based Matching Finished: {len(matched_pairs)} pairs matched. ---")
         return matched_pairs, unmatched_events, unmatched_meetings
